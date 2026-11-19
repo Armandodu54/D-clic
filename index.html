@@ -58,10 +58,11 @@ const $=s=>document.querySelector(s),app=$('#app');
 const esc=s=>String(s).replace(/[&<>"']/g,c=>'&#'+c.charCodeAt(0)+';');
 const ls={get:k=>{try{return localStorage.getItem(k)}catch(e){return null}},set:(k,v)=>{try{localStorage.setItem(k,v)}catch(e){}}};
 const fmt=ms=>{let s=Math.max(0,Math.floor(ms/1000));const d=Math.floor(s/86400),p=n=>String(n).padStart(2,'0');s%=86400;return(d?d+' j ':'')+p(Math.floor(s/3600))+':'+p(Math.floor(s%3600/60))+':'+p(s%60)};
-const H={apikey:SB_KEY,...(SB_KEY.startsWith('eyJ')?{Authorization:'Bearer '+SB_KEY}:{})};
-const api=(p,o={})=>fetch(SB_URL+p,{...o,headers:{...H,...(o.headers||{})}});
+const BASE=SB_URL.trim().replace(/\/+$/,'').replace(/\/(rest|storage|auth)\/.*$/,''),KEY=SB_KEY.trim();
+const H={apikey:KEY,...(KEY.startsWith('eyJ')?{Authorization:'Bearer '+KEY}:{})};
+const api=(p,o={})=>fetch(BASE+p,{...o,headers:{...H,...(o.headers||{})}});
 const J={'Content-Type':'application/json',Prefer:'return=minimal'};
-const pub=p=>SB_URL+'/storage/v1/object/public/photos/'+p;
+const pub=p=>BASE+'/storage/v1/object/public/photos/'+p;
 const uid=()=>crypto.randomUUID().replace(/-/g,'');
 
 let tm,stream,camOK=false,busy=false;
@@ -93,9 +94,10 @@ function home(){
   <label>Révélation<input name="t" type="datetime-local" value="${d.toISOString().slice(0,16)}" required></label></div>
   <button class="btn" id="go">Créer l’album et le QR code</button></form></section>`;
   $('#f').onsubmit=async e=>{e.preventDefault();const f=new FormData(e.target),b=$('#go');b.disabled=true;
+    if(/VOTRE/.test(SB_URL+SB_KEY))return b.disabled=false,alert('Il faut d’abord remplacer VOTRE-PROJET et VOTRE_CLE_PUBLIQUE en haut du fichier index.html par tes valeurs Supabase.');
     const a={id:uid().slice(0,10),name:String(f.get('n')).trim(),per_guest:Math.max(1,Math.min(36,+f.get('m')||10)),reveal_at:new Date(f.get('t')).toISOString()};
-    try{const r=await api('/rest/v1/albums',{method:'POST',headers:J,body:JSON.stringify(a)});if(!r.ok)throw 0;a.at=new Date(a.reveal_at).getTime();share(a)}
-    catch(err){b.disabled=false;alert('Création impossible : vérifie la configuration Supabase (URL, clé, tables).')}};
+    try{const r=await api('/rest/v1/albums',{method:'POST',headers:J,body:JSON.stringify(a)});if(!r.ok)throw new Error(r.status+' '+await r.text());a.at=new Date(a.reveal_at).getTime();share(a)}
+    catch(err){b.disabled=false;alert('Création impossible.\n\nDétail technique à me copier : '+err.message)}};
 }
 
 function share(a){
