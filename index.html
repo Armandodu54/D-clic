@@ -1,0 +1,164 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Déclic – l’appareil photo jetable partagé</title>
+<style>
+*{box-sizing:border-box}
+:root{--bg:#f4efe6;--fg:#1c1a17;--mut:#6a6359;--card:#fffdf8;--acc:#e8512f;--line:#e3dac9;--in:#fff;color-scheme:light;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+@media(prefers-color-scheme:dark){:root{--bg:#0d1424;--fg:#f3ece0;--mut:#9aa4b8;--card:#151f38;--acc:#ff6b47;--line:#26314f;--in:#0f1830;color-scheme:dark}}
+body{margin:0;min-height:100vh;background:var(--bg);color:var(--fg);font:16px/1.5 system-ui,-apple-system,"Segoe UI",sans-serif;display:flex;justify-content:center;padding:16px}
+main{width:100%;max-width:460px}
+[hidden]{display:none!important}
+.card{background:var(--card);border:1px solid var(--line);border-radius:20px;padding:22px;display:flex;flex-direction:column;gap:14px}
+.c{text-align:center;align-items:center}
+h1{font:700 1.7rem/1.15 Georgia,"Times New Roman",serif;margin:0}
+.eyebrow{margin:0;font-weight:600;color:var(--acc)}
+.mut{color:var(--mut);margin:0}.s{font-size:.82rem}
+form{display:flex;flex-direction:column;gap:14px}
+label{display:flex;flex-direction:column;gap:6px;font-weight:600;font-size:.9rem;width:100%}
+input{font:inherit;padding:11px 12px;border-radius:12px;border:1px solid var(--line);background:var(--in);color:var(--fg);width:100%}
+.row{display:grid;grid-template-columns:1fr 1fr;gap:10px;width:100%}
+.btn{font:inherit;font-weight:700;border:0;border-radius:14px;padding:13px 16px;background:var(--acc);color:#fff;text-align:center;text-decoration:none;cursor:pointer}
+.btn:disabled{opacity:.5}
+.ghost{background:transparent;color:var(--fg);border:1px solid var(--line)}
+.lnk{color:var(--mut);font-size:.9rem;text-align:center}
+.qr{background:#fff;padding:12px;border-radius:14px;display:inline-block;line-height:0}
+.vf{position:relative;aspect-ratio:3/4;background:#000;border-radius:16px;overflow:hidden;display:grid;place-items:center}
+video{width:100%;height:100%;object-fit:cover}
+.nocam{color:#ddd;padding:20px;text-align:center}
+.fl{position:absolute;inset:0;background:#fff;opacity:0;pointer-events:none}
+.fl.on{animation:fl .35s}
+@keyframes fl{from{opacity:.9}to{opacity:0}}
+.ctr{text-align:center;font-size:1.05rem}
+.shut{width:76px;height:76px;border-radius:50%;border:5px solid var(--fg);background:var(--acc);align-self:center;cursor:pointer}
+.shut:disabled{opacity:.3}
+.strip{display:flex;flex-wrap:wrap;gap:6px;justify-content:center}
+.strip i{width:20px;height:28px;border-radius:4px;border:1px dashed var(--mut)}
+.strip i.on{background:var(--acc);border-color:var(--acc)}
+.grid{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+figure{margin:0;position:relative}
+figure img{width:100%;aspect-ratio:3/4;object-fit:cover;border-radius:12px;display:block;background:var(--line);animation:dev 2.6s ease-out var(--d) both}
+@keyframes dev{from{filter:blur(22px) sepia(1) brightness(.35);opacity:.25}to{filter:none;opacity:1}}
+figcaption{position:absolute;left:8px;top:8px;font-size:.72rem;font-weight:700;padding:3px 8px;border-radius:999px;background:rgba(0,0,0,.6);color:#fff}
+.sv{position:absolute;right:8px;bottom:8px;font:inherit;font-size:.75rem;font-weight:700;padding:6px 10px;border:0;border-radius:999px;background:rgba(0,0,0,.65);color:#fff;cursor:pointer}
+</style>
+</head>
+<body>
+<main id="app"></main>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+<script>
+// ====== À MODIFIER : les 2 valeurs données par Supabase (Project Settings → API) ======
+const SB_URL='https://bzgfowxyusowgzxwrwzk.supabase.co';
+const SB_KEY='sb_publishable__vkH5xCiIoOgEX3y9WDiUg_9VZjYj2E'; // clé « anon public » ou « publishable » (jamais la clé secrète/service_role)
+// ======================================================================================
+
+const $=s=>document.querySelector(s),app=$('#app');
+const esc=s=>String(s).replace(/[&<>"']/g,c=>'&#'+c.charCodeAt(0)+';');
+const ls={get:k=>{try{return localStorage.getItem(k)}catch(e){return null}},set:(k,v)=>{try{localStorage.setItem(k,v)}catch(e){}}};
+const fmt=ms=>{let s=Math.max(0,Math.floor(ms/1000));const d=Math.floor(s/86400),p=n=>String(n).padStart(2,'0');s%=86400;return(d?d+' j ':'')+p(Math.floor(s/3600))+':'+p(Math.floor(s%3600/60))+':'+p(s%60)};
+const H={apikey:SB_KEY,...(SB_KEY.startsWith('eyJ')?{Authorization:'Bearer '+SB_KEY}:{})};
+const api=(p,o={})=>fetch(SB_URL+p,{...o,headers:{...H,...(o.headers||{})}});
+const J={'Content-Type':'application/json',Prefer:'return=minimal'};
+const pub=p=>SB_URL+'/storage/v1/object/public/photos/'+p;
+const uid=()=>crypto.randomUUID().replace(/-/g,'');
+
+let tm,stream,camOK=false,busy=false;
+const stopCam=()=>{stream&&stream.getTracks().forEach(t=>t.stop());stream=null;camOK=false};
+async function openCam(){try{stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:{ideal:'environment'}},audio:false});const v=$('#v');if(!v)return stopCam();v.srcObject=stream;await v.play();v.hidden=false;camOK=true}catch(e){camOK=false;const n=$('#nocam');if(n)n.hidden=false}}
+const grab=s=>{const w=s.videoWidth||s.width,h=s.videoHeight||s.height,k=Math.min(1,1600/Math.max(w,h)),c=document.createElement('canvas');c.width=Math.round(w*k);c.height=Math.round(h*k);c.getContext('2d').drawImage(s,0,0,c.width,c.height);return new Promise(r=>c.toBlob(r,'image/jpeg',.8))};
+
+function msg(t,p){app.innerHTML=`<section class="card"><h1>${t}</h1><p class="mut">${p}</p><button class="btn" id="rt">Réessayer</button><a class="lnk" href="#">Créer un album</a></section>`;$('#rt').onclick=route}
+
+async function route(){
+  clearInterval(tm);stopCam();
+  const id=location.hash.slice(1);
+  if(!id)return home();
+  app.innerHTML='<section class="card c"><p class="mut">Chargement…</p></section>';
+  let a;
+  try{const r=await api('/rest/v1/albums?select=*&id=eq.'+encodeURIComponent(id));if(!r.ok)throw 0;a=(await r.json())[0]}
+  catch(e){return msg('Connexion impossible','Vérifie ta connexion internet puis réessaie.')}
+  if(!a)return msg('Album introuvable','Ce lien n’est pas valide. Redemande le QR code à l’organisateur.');
+  a.at=new Date(a.reveal_at).getTime();
+  guest(a);
+}
+
+function home(){
+  const d=new Date(Date.now()+864e5);d.setMinutes(d.getMinutes()-d.getTimezoneOffset());
+  app.innerHTML=`<section class="card"><p class="eyebrow">📸 Déclic</p><h1>L’appareil photo jetable de ta soirée</h1>
+  <p class="mut">Chaque invité scanne ton QR code, entre son prénom et prend ses photos. Tout le monde les découvre à l’heure de la révélation, dans un album commun.</p>
+  <form id="f"><label>Nom de l’album<input name="n" required maxlength="30" value="Notre soirée"></label>
+  <div class="row"><label>Photos par invité<input name="m" type="number" min="1" max="36" value="10" required></label>
+  <label>Révélation<input name="t" type="datetime-local" value="${d.toISOString().slice(0,16)}" required></label></div>
+  <button class="btn" id="go">Créer l’album et le QR code</button></form></section>`;
+  $('#f').onsubmit=async e=>{e.preventDefault();const f=new FormData(e.target),b=$('#go');b.disabled=true;
+    const a={id:uid().slice(0,10),name:String(f.get('n')).trim(),per_guest:Math.max(1,Math.min(36,+f.get('m')||10)),reveal_at:new Date(f.get('t')).toISOString()};
+    try{const r=await api('/rest/v1/albums',{method:'POST',headers:J,body:JSON.stringify(a)});if(!r.ok)throw 0;a.at=new Date(a.reveal_at).getTime();share(a)}
+    catch(err){b.disabled=false;alert('Création impossible : vérifie la configuration Supabase (URL, clé, tables).')}};
+}
+
+function share(a){
+  const url=location.href.split('#')[0]+'#'+a.id;
+  app.innerHTML=`<section class="card c"><p class="eyebrow">Album prêt ✨</p><h1>${esc(a.name)}</h1>
+  <p class="mut">${a.per_guest} photo${a.per_guest>1?'s':''} par invité · révélation le ${new Date(a.at).toLocaleString('fr-FR',{dateStyle:'full',timeStyle:'short'})}</p>
+  <div id="qr" class="qr"></div><p class="mut">Affiche ce QR code ou envoie le lien à tes invités.</p>
+  <input id="u" readonly value="${esc(url)}">
+  <div class="row"><button class="btn" id="cp">Copier le lien</button><a class="btn ghost" href="#${a.id}">Ouvrir comme invité</a></div>
+  <a class="lnk" href="#" id="nw">← Créer un autre album</a></section>`;
+  if(window.QRCode)new QRCode($('#qr'),{text:url,width:224,height:224,correctLevel:QRCode.CorrectLevel.M});else $('#qr').textContent='QR code indisponible : utilise le lien.';
+  $('#cp').onclick=async()=>{try{await navigator.clipboard.writeText(url);$('#cp').textContent='Copié ✓'}catch(e){$('#u').select()}};
+  $('#nw').onclick=e=>{e.preventDefault();home()};
+}
+
+function guest(a){
+  const nk='dc:n:'+a.id,ck='dc:c:'+a.id,name=ls.get(nk),head=`<p class="eyebrow">📸 ${esc(a.name)}</p>`,max=a.per_guest;
+  if(!name){
+    app.innerHTML=`<section class="card">${head}<h1>Bienvenue&nbsp;!</h1><p class="mut">Tu as ${max} photo${max>1?'s':''} à prendre. Tout le monde les découvrira à la révélation.</p>
+    <form id="nf"><label>Ton prénom<input name="p" required maxlength="24" autocomplete="given-name"></label><button class="btn">Rejoindre l’album</button></form></section>`;
+    $('#nf').onsubmit=e=>{e.preventDefault();ls.set(nk,String(new FormData(e.target).get('p')).trim());route()};
+    return;
+  }
+  if(Date.now()>=a.at)return gallery(a,name);
+  let n=+ls.get(ck)||0;
+  app.innerHTML=`<section class="card">${head}<h1>Salut ${esc(name)} 👋</h1>
+  <p class="mut">Révélation dans <b id="cd"></b></p>
+  <div class="vf"><video id="v" playsinline muted hidden></video><div id="nocam" class="nocam" hidden>Appuie sur le déclencheur pour ouvrir l’appareil photo de ton téléphone.</div><div id="fl" class="fl"></div></div>
+  <input id="fi" type="file" accept="image/*" capture="environment" hidden>
+  <div class="ctr"><b id="ct"></b></div>
+  <button id="sh" class="shut" aria-label="Prendre une photo"></button>
+  <div id="strip" class="strip"></div>
+  <p class="mut s">Tes photos sont envoyées dans l’album commun. Tu ne peux pas les revoir avant la révélation.</p></section>`;
+  const upd=()=>{const l=max-n;$('#ct').textContent=l>0?l+(l>1?' photos restantes':' photo restante'):'Pellicule terminée 🎞️';$('#sh').disabled=l<=0;
+    $('#strip').innerHTML=Array.from({length:max},(_,i)=>`<i class="${i<n?'on':''}"></i>`).join('');
+    if(l<=0){stopCam();$('.vf').hidden=true}};
+  const take=async s=>{const b=await grab(s),p=a.id+'/'+uid()+'.jpg';
+    let r=await api('/storage/v1/object/photos/'+p,{method:'POST',headers:{'Content-Type':'image/jpeg'},body:b});if(!r.ok)throw 0;
+    r=await api('/rest/v1/photos',{method:'POST',headers:J,body:JSON.stringify({album_id:a.id,guest:name,path:p})});if(!r.ok)throw 0;
+    n++;ls.set(ck,n);navigator.vibrate&&navigator.vibrate(30);
+    const f=$('#fl');f.classList.remove('on');void f.offsetWidth;f.classList.add('on');upd()};
+  const go=async s=>{busy=true;$('#sh').disabled=true;try{await take(s)}catch(e){alert('Photo non envoyée. Vérifie ta connexion et réessaie.')}busy=false;upd()};
+  $('#sh').onclick=()=>{if(busy||max-n<=0)return;if(camOK)go($('#v'));else $('#fi').click()};
+  $('#fi').onchange=async e=>{const f=e.target.files[0];e.target.value='';if(!f||busy||max-n<=0)return;try{go(await createImageBitmap(f))}catch(err){}};
+  const tick=()=>{const r=a.at-Date.now();if(r<=0)return route();$('#cd').textContent=fmt(r)};
+  upd();tick();tm=setInterval(tick,1000);openCam();
+}
+
+async function gallery(a,name){
+  let L=[],ok=true;
+  try{const r=await api('/rest/v1/photos?select=path,guest&order=created_at.asc&album_id=eq.'+encodeURIComponent(a.id));ok=r.ok;if(ok)L=await r.json()}catch(e){ok=false}
+  app.innerHTML=`<section class="card"><p class="eyebrow">📸 ${esc(a.name)}</p><h1>C’est révélé&nbsp;! 🎞️</h1>
+  <p class="mut">${!ok?'Chargement impossible, réessaie.':L.length?`${L.length} photo${L.length>1?'s':''} prise${L.length>1?'s':''} par les invités. Bravo ${esc(name)} !`:'Aucune photo dans cet album pour le moment.'}</p>
+  <div class="grid">${L.map((p,i)=>`<figure style="--d:${Math.min(i*.15,3).toFixed(2)}s"><img loading="lazy" src="${pub(p.path)}" alt="Photo de ${esc(p.guest)}"><figcaption>${esc(p.guest)}</figcaption><button class="sv" data-i="${i}">Enregistrer</button></figure>`).join('')}</div>
+  <button class="btn ghost" id="rf">Actualiser</button>
+  <p class="mut s">Tu peux aussi appuyer longuement sur une photo pour l’enregistrer.</p>
+  <a class="lnk" href="#">Créer mon propre album</a></section>`;
+  $('#rf').onclick=route;
+  app.querySelectorAll('.sv').forEach(b=>b.onclick=async()=>{const i=+b.dataset.i;try{const u=URL.createObjectURL(await(await fetch(pub(L[i].path))).blob()),x=document.createElement('a');x.href=u;x.download='declic-'+(i+1)+'.jpg';x.click();setTimeout(()=>URL.revokeObjectURL(u),5e3)}catch(e){window.open(pub(L[i].path),'_blank')}});
+}
+
+addEventListener('hashchange',route);
+route();
+</script>
+</body>
+</html>
